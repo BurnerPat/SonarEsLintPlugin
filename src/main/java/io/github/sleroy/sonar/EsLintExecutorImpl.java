@@ -63,7 +63,7 @@ public class EsLintExecutorImpl implements EsLintExecutor {
         String rulesDir = config.getRulesDir();
         if (rulesDir != null && !rulesDir.isEmpty()) {
             command
-                    .addArgument("--rules-dir")
+                    .addArgument("--rulesdir")
                     .addArgument(this.preparePath(rulesDir));
         }
 
