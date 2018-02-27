@@ -9,16 +9,10 @@
  */
 package io.github.sleroy.sonar;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Set;
-import java.util.stream.Collectors;
-
+import io.github.sleroy.sonar.api.EsLintExecutor;
+import io.github.sleroy.sonar.api.EsLintParser;
+import io.github.sleroy.sonar.api.PathResolver;
+import io.github.sleroy.sonar.model.EsLintIssue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sonar.api.batch.fs.InputFile;
@@ -31,107 +25,115 @@ import org.sonar.api.batch.sensor.issue.NewIssueLocation;
 import org.sonar.api.config.Configuration;
 import org.sonar.api.rule.RuleKey;
 
-import io.github.sleroy.sonar.api.EsLintExecutor;
-import io.github.sleroy.sonar.api.EsLintParser;
-import io.github.sleroy.sonar.api.PathResolver;
-import io.github.sleroy.sonar.model.EsLintIssue;
+import java.util.*;
+import java.util.Map.Entry;
+import java.util.stream.Collectors;
 
 public class EsLintSensor implements Sensor {
     private static final Logger LOG = LoggerFactory.getLogger(EsLintSensor.class);
 
-    private final Configuration	 settings;
-    private final PathResolver	 resolver;
+    private final Configuration settings;
+    private final PathResolver resolver;
     private final EsLintExecutor executor;
-    private final EsLintParser	 parser;
+    private final EsLintParser parser;
 
     public EsLintSensor(Configuration settings, PathResolver resolver, EsLintExecutor executor, EsLintParser parser) {
-	this.settings = settings;
-	this.resolver = resolver;
-	this.executor = executor;
-	this.parser = parser;
+        this.settings = settings;
+        this.resolver = resolver;
+        this.executor = executor;
+        this.parser = parser;
     }
 
     @Override
     public void describe(SensorDescriptor desc) {
-	desc.name("Linting sensor for Javascript files").onlyOnLanguage(EsLintLanguage.LANGUAGE_KEY);
+        desc.name("Linting sensor for Javascript files").onlyOnLanguage(EsLintLanguage.LANGUAGE_KEY);
     }
 
     @Override
     public void execute(SensorContext ctx) {
-	if (!settings.getBoolean(EsLintPlugin.SETTING_ES_LINT_ENABLED).orElse(Boolean.FALSE)) {
-	    LOG.debug("Skipping eslint execution - {} set to false", EsLintPlugin.SETTING_ES_LINT_ENABLED);
-	    return;
-	}
+        if (!settings.getBoolean(EsLintPlugin.SETTING_ES_LINT_ENABLED).orElse(Boolean.FALSE)) {
+            LOG.debug("Skipping eslint execution - {} set to false", EsLintPlugin.SETTING_ES_LINT_ENABLED);
+            return;
+        }
 
-	final EsLintExecutorConfig config = EsLintExecutorConfig.fromSettings(ctx, resolver);
+        final EsLintExecutorConfig config = EsLintExecutorConfig.fromSettings(ctx, resolver);
 
-	if (config.getPathToEsLint() == null) {
-	    LOG.warn("Path to eslint not defined or not found. Skipping eslint analysis.");
-	    return;
-	}
-	if (config.getConfigFile() == null) {
-	    LOG.warn("Path to .eslintrc.* configuration file either not defined or not found - Skipping eslint analysis.");
-	    return;
+        if (config.getPathToEsLint() == null) {
+            LOG.warn("Path to eslint not defined or not found. Skipping eslint analysis.");
+            return;
+        }
+        if (config.getConfigFile() == null) {
+            LOG.warn("Path to .eslintrc.* configuration file either not defined or not found - Skipping eslint analysis.");
+            return;
 
-	}
+        }
 
-	final Collection<ActiveRule> allRules = ctx.activeRules().findByRepository(EsRulesDefinition.REPOSITORY_NAME);
-	final Set<String> ruleNames = new HashSet<>(100);
-	ruleNames.addAll(allRules.stream().map(rule -> rule.ruleKey().rule()).collect(Collectors.toList()));
+        final Collection<ActiveRule> allRules = ctx.activeRules().findByRepository(EsRulesDefinition.REPOSITORY_NAME);
 
-	final List<String> paths = new ArrayList<>(100);
+        final Set<String> ruleNames = new HashSet<>(100);
+        ruleNames.addAll(allRules.stream().map(rule -> rule.ruleKey().rule()).collect(Collectors.toList()));
 
-	final Map<String, InputFile> fileMap = new HashMap<>(100);
-	for (final InputFile file : ctx.fileSystem().inputFiles(ctx.fileSystem().predicates().hasLanguage(EsLintLanguage.LANGUAGE_KEY))) {
+        final List<String> paths = new ArrayList<>(100);
 
-	    final String pathAdjusted = file.absolutePath();
-	    paths.add(pathAdjusted);
-	    fileMap.put(pathAdjusted, file);
-	}
+        final Map<String, InputFile> fileMap = new HashMap<>(100);
 
-	final List<String> jsonResults = executor.execute(config, paths);
+        for (final InputFile file : ctx.fileSystem().inputFiles(ctx.fileSystem().predicates().hasLanguage(EsLintLanguage.LANGUAGE_KEY))) {
+            final String pathAdjusted = file.absolutePath();
+            paths.add(pathAdjusted);
+            fileMap.put(pathAdjusted, file);
+        }
 
-	final Map<String, List<EsLintIssue>> issues = parser.parse(jsonResults);
+        final List<String> jsonResults = executor.execute(config, paths);
+        final Map<String, List<EsLintIssue>> issues = parser.parse(jsonResults);
 
-	if (issues == null) {
-	    LOG.warn("Eslint returned no result at all");
-	    return;
-	}
+        if (issues == null) {
+            LOG.warn("Eslint returned no result at all");
+            return;
+        }
 
-	// Each issue bucket will contain info about a single file
-	for (final Entry<String, List<EsLintIssue>> filePathEntry : issues.entrySet()) {
-	    final List<EsLintIssue> batchIssues = filePathEntry.getValue();
+        // Each issue bucket will contain info about a single file
+        for (final Entry<String, List<EsLintIssue>> filePathEntry : issues.entrySet()) {
+            final List<EsLintIssue> batchIssues = filePathEntry.getValue();
 
-	    if (batchIssues == null || batchIssues.isEmpty()) {
-		continue;
-	    }
+            if (batchIssues == null || batchIssues.isEmpty()) {
+                continue;
+            }
 
-	    final String filePath = filePathEntry.getKey();
-	    if (!fileMap.containsKey(filePath)) {
-		LOG.warn("EsLint reported issues against a file that wasn't sent to it - will be ignored: {}", filePath);
-		continue;
-	    }
+            final String filePath = filePathEntry.getKey();
 
-	    final InputFile file = fileMap.get(filePath);
+            if (!fileMap.containsKey(filePath)) {
+                LOG.warn("EsLint reported issues against a file that wasn't sent to it - will be ignored: {}", filePath);
+                continue;
+            }
 
-	    for (final EsLintIssue issue : batchIssues) {
-		// Make sure the rule we're violating is one we recognise - if
-		// not, we'll
-		// fall back to the generic 'eslint-issue' rule
-		String ruleName = issue.getRuleId().replace('/', '-');
-		if (!ruleNames.contains(ruleName)) {
-		    LOG.trace("Rule {} has not yet being defined into the EsLint plugin", ruleName);
-		    ruleName = EsRulesDefinition.ESLINT_UNKNOWN_RULE.getKey();
-		}
+            final InputFile file = fileMap.get(filePath);
 
-		final NewIssue newIssue = ctx.newIssue().forRule(RuleKey.of(EsRulesDefinition.REPOSITORY_NAME, ruleName));
+            for (final EsLintIssue issue : batchIssues) {
+                // Make sure the rule we're violating is one we recognise - if
+                // not, we'll
+                // fall back to the generic 'eslint-issue' rule
+                String ruleId = issue.getRuleId();
 
-		final NewIssueLocation newIssueLocation = newIssue
-			.newLocation().on(file).message(issue.getMessage()).at(file.selectLine(issue.getLine()));
+                if (ruleId == null) {
+                    LOG.warn("Rule id was null: {}", issue.toString());
+                    ruleId = "unknown";
+                }
 
-		newIssue.at(newIssueLocation);
-		newIssue.save();
-	    }
-	}
+                String ruleName = ruleId.replace('/', '-');
+
+                if (!ruleNames.contains(ruleName)) {
+                    LOG.trace("Rule {} has not yet being defined into the EsLint plugin", ruleName);
+                    ruleName = EsRulesDefinition.ESLINT_UNKNOWN_RULE.getKey();
+                }
+
+                final NewIssue newIssue = ctx.newIssue().forRule(RuleKey.of(EsRulesDefinition.REPOSITORY_NAME, ruleName));
+
+                final NewIssueLocation newIssueLocation = newIssue
+                    .newLocation().on(file).message(issue.getMessage()).at(file.selectLine(issue.getLine()));
+
+                newIssue.at(newIssueLocation);
+                newIssue.save();
+            }
+        }
     }
 }
