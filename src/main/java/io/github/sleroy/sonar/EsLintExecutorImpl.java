@@ -129,16 +129,12 @@ public class EsLintExecutorImpl implements EsLintExecutor {
 
         LOG.debug("Split {} files into  {} batches for processing", files.size(), batches.size());
 
-        for (int i = 0, ni = batches.size(); i < ni; i++) {
-            StringBuilder outputBuilder = new StringBuilder();
-            List<String> thisBatch = batches.get(i);
+        for (List<String> thisBatch : batches) {
             Command thisCommand = this.getBaseCommand(config, eslintOutputFilePath);
 
-            for (int fileIndex = 0, nf = thisBatch.size(); fileIndex < nf; fileIndex++) {
-                thisCommand.addArgument(thisBatch.get(fileIndex));
+            for (String aThisBatch : thisBatch) {
+                thisCommand.addArgument(aThisBatch);
             }
-
-            LOG.debug("Executing EsLint with command: {}", thisCommand.toCommandLine());
 
             // Timeout is specified per file, not per batch (which can vary a lot)
             // so multiply it up
